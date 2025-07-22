@@ -1,0 +1,21 @@
+--extra-index-url https://download.pytorch.org/whl/cu124
+torch==2.6.0+cu124
+timm
+scipy
+einops
+wandb
+matplotlib
+diffusers
+torchtnt
+rich
+git+https://github.com/LTH14/torch-fidelity.git@master#egg=torch-fidelity
+huggingface_hub
+
+black
+pylint
+flake8
+isort
+jaxtyping
+torchdiffeq
+gdown
+ipykernel
