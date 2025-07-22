@@ -1,6 +1,6 @@
 # DeTok: Latent Denoising Makes Good Visual Tokenizers <br><sub>Official PyTorch Implementation</sub>
 
-[![arXiv](https://img.shields.io/badge/arXiv%20paper-Coming%20Soon-b31b1b.svg)](https://arxiv.org/abs/2507.15856)&nbsp;
+[![arXiv](https://img.shields.io/badge/arXiv-2507.15856-b31b1b.svg)](https://arxiv.org/abs/2507.15856)&nbsp;
 [![huggingface](https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-DeTok-yellow)](https://huggingface.co/jjiaweiyang/l-DeTok)&nbsp;
 
 <p align="center">
