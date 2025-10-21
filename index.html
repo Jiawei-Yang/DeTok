@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Latent Denoising Makes Good Tokenizers (l-DeTok)</title>
+  <meta name="description" content="l-DeTok: A latent denoising tokenizer that aligns visual token embeddings with downstream denoising objectives, improving image generation across six models." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='black'/%3E%3Cpath d='M18 34c0-8 6-14 14-14s14 6 14 14-6 14-14 14-14-6-14-14zm22-9-9 18-5-7-6 2' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+
+  <!-- Open Graph / Twitter -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Latent Denoising Makes Good Tokenizers (l-DeTok)" />
+  <meta property="og:description" content="A simple, effective visual tokenizer trained with latent denoising; consistent gains across diffusion and autoregressive models." />
+  <meta property="og:image" content="assets/og.jpg" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <!-- Minimal typography + Tailwind (CDN is fine on GitHub Pages) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Studio‑minimal look */
+    :root { color-scheme: light dark; --border: rgba(0,0,0,.12); --border-dark: rgba(255,255,255,.12); }
+    html { scroll-behavior: smooth; }
+    body { font-feature-settings: "ss01" on, "ss02" on; }
+    .grad { background: radial-gradient(60% 80% at 70% 10%, rgba(0,0,0,.06), transparent 40%),
+                        radial-gradient(50% 60% at 0% 100%, rgba(0,0,0,.04), transparent 40%); }
+    .page { max-width: 960px; }
+    .glass { backdrop-filter: blur(8px); background: rgba(255,255,255,0.6); }
+    @media (prefers-color-scheme: dark) { .glass { background: rgba(20,20,20,0.6); } }
+
+    /* Components (no @apply — works without build step) */
+    .btn { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; border-radius: .75rem; padding:.375rem .75rem; font-size:.875rem; line-height:1rem; border:1px solid var(--border);
+           transition: transform .15s ease; }
+    .btn:hover { transform: translateY(-2px); }
+    @media (prefers-color-scheme: dark){ .btn{ border-color: var(--border-dark);} }
+
+    .pill { display:inline-flex; align-items:center; gap:.375rem; border-radius:9999px; padding:.25rem .625rem; font-size:.75rem; border:1px solid var(--border); }
+    @media (prefers-color-scheme: dark){ .pill{ border-color: var(--border-dark);} }
+
+    .glass-card { border:1px solid var(--border); border-radius:1rem; padding:1.25rem; }
+    @media (prefers-color-scheme: dark){ .glass-card{ border-color: var(--border-dark);} }
+
+    .knob{ width:100%; height:6px; border-radius:9999px; appearance:none; background: rgba(0,0,0,.1); }
+    .knob::-webkit-slider-thumb{ -webkit-appearance:none; appearance:none; width:16px; height:16px; border-radius:9999px; background: currentColor; }
+    @media (prefers-color-scheme: dark){ .knob{ background: rgba(255,255,255,.15);} }
+
+    .compare{ position:relative; overflow:hidden; border-radius:1rem; }
+    .compare img{ display:block; width:100%; height:auto; }
+    .compare .top{ position:absolute; inset:0; object-fit:cover; clip-path: inset(0 calc(100% - var(--pos, 50%)) 0 0); }
+    .compare input[type=range]{ position:absolute; inset:auto 0 0 0; width:100%; opacity:.9; }
+
+    .grid-auto{ display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:1rem; }
+    .aspect-clip{ aspect-ratio:1/1; }
+  </style>
+
+  <!-- JSON-LD for better link previews/search -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "ScholarlyArticle",
+    "headline": "Latent Denoising Makes Good Tokenizers",
+    "name": "Latent Denoising Makes Good Tokenizers",
+    "author": [
+      {"@type": "Person", "name": "Jiawei Yang"},
+      {"@type": "Person", "name": "Tianhong Li"},
+      {"@type": "Person", "name": "Lijie Fan"},
+      {"@type": "Person", "name": "Yonglong Tian"},
+      {"@type": "Person", "name": "Yue Wang"}
+    ],
+    "description": "A latent denoising tokenizer (-DeTok) trained to reconstruct clean images from corrupted latent embeddings, improving generative modeling across diffusion and autoregressive frameworks on ImageNet."
+  }
+  </script>
+</head>
+<body class="antialiased text-neutral-900 dark:text-neutral-100 bg-white dark:bg-neutral-950 grad">
+  <!-- Header -->
+  <header class="sticky top-0 z-40 border-b border-neutral-200/60 dark:border-neutral-800/60 backdrop-blur">
+    <div class="mx-auto page px-6 py-3 flex items-center justify-between">
+      <a href="#top" class="font-semibold tracking-tight">l-DeTok</a>
+      <nav class="text-sm text-neutral-600 dark:text-neutral-400 space-x-6">
+        <a href="#about">About</a>
+        <a href="#abstract">Abstract</a>
+        <a href="#method">Method</a>
+        <a href="#demos">Demos</a>
+        <a href="#gallery">Gallery</a>
+        <a href="#results">Results</a>
+        <a href="#citation">Citation</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <main id="top" class="mx-auto page px-6">
+    <section id="about" class="pt-16 pb-10">
+      <div class="grid md:grid-cols-5 gap-8 items-start">
+        <div class="md:col-span-3">
+          <h1 class="text-4xl md:text-6xl font-semibold leading-tight tracking-tight">Latent Denoising Makes Good Tokenizers</h1>
+          <p class="mt-5 text-lg md:text-xl text-neutral-600 dark:text-neutral-300 max-w-2xl">A simple tokenizer trained to reconstruct clean images from heavily corrupted latent embeddings—aligning tokens with downstream denoising objectives and improving image generation across six representative models.</p>
+          <div class="mt-8 flex flex-wrap gap-3">
+            <a class="btn" href="https://arxiv.org/abs/2507.15856" target="_blank" rel="noopener">📄 Paper</a>
+            <a class="btn" href="https://github.com/Jiawei-Yang/DeTok" target="_blank" rel="noopener">💻 Code</a>
+          </div>
+          <div class="mt-4 text-sm text-neutral-600 dark:text-neutral-400">
+            <p class="font-medium">
+              <a href="https://jiawei-yang.github.io/" target="_blank" rel="noopener" class="hover:text-neutral-900 dark:hover:text-neutral-100">Jiawei Yang</a><sup>1</sup>,
+              <a href="https://tianhong-li.github.io/" target="_blank" rel="noopener" class="hover:text-neutral-900 dark:hover:text-neutral-100">Tianhong Li</a><sup>2</sup>,
+              <a href="https://scholar.google.com/citations?user=0K76A4YAAAAJ" target="_blank" rel="noopener" class="hover:text-neutral-900 dark:hover:text-neutral-100">Lijie Fan</a><sup>3</sup>,
+              <a href="https://scholar.google.com/citations?user=wrHYBFgAAAAJ" target="_blank" rel="noopener" class="hover:text-neutral-900 dark:hover:text-neutral-100">Yonglong Tian</a><sup>4</sup>,
+              <a href="https://yuewang.xyz/" target="_blank" rel="noopener" class="hover:text-neutral-900 dark:hover:text-neutral-100">Yue Wang</a><sup>1</sup>
+            </p>
+            <p class="mt-2 text-xs text-neutral-500">
+              <sup>1</sup>University of Southern California &nbsp;&nbsp; <sup>2</sup>MIT CSAIL &nbsp;&nbsp; <sup>3</sup>Google DeepMind &nbsp;&nbsp; <sup>4</sup>OpenAI
+            </p>
+          </div>
+        </div>
+        <figure class="md:col-span-2 glass rounded-3xl border border-neutral-200/60 dark:border-neutral-800/60 p-3">
+          <img src="assets/teaser.jpg" alt="l‑DeTok teaser" class="rounded-2xl w-full h-auto" />
+        </figure>
+      </div>
+    </section>
+
+    <!-- Abstract -->
+    <section id="abstract" class="py-12 border-t border-neutral-200/60 dark:border-neutral-800/60">
+      <h2 class="text-2xl md:text-3xl font-semibold">Abstract</h2>
+      <p class="mt-4 leading-7 text-neutral-700 dark:text-neutral-300">Despite their fundamental role, it remains unclear what properties could make tokenizers more effective for generative modeling. We observe that modern generative models share a conceptually similar training objective—reconstructing clean
+        signals from corrupted inputs, such as signals degraded by Gaussian noise or
+        masking—a process we term denoising. Motivated by this insight, we propose
+        aligning tokenizer embeddings directly with the downstream denoising objective,
+        encouraging latent embeddings that remain reconstructable even under significant
+        corruption. To achieve this, we introduce the Latent Denoising Tokenizer (l-DeTok), a simple yet highly effective tokenizer trained to reconstruct clean images
+        from latent embeddings corrupted via interpolative noise or random masking. Extensive experiments on class-conditioned (ImageNet 256x256 and 512x512) and
+        text-conditioned (MSCOCO) image generation benchmarks demonstrate that our
+        l-DeTok consistently improves generation quality across six representative generative models compared to prior tokenizers. Our findings highlight denoising as
+        a fundamental design principle for tokenizer development, and we hope it could
+        motivate new perspectives for future tokenizer design.</p>
+    </section>
+
+    <!-- Method -->
+    <section id="method" class="py-12 border-t border-neutral-200/60 dark:border-neutral-800/60">
+      <h2 class="text-2xl md:text-3xl font-semibold">Method in 30 seconds</h2>
+
+      <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-8 items-start">
+        <!-- Top row: Figure spans both columns -->
+        <figure class="md:col-span-2 glass rounded-3xl p-3 border border-neutral-200/60 dark:border-neutral-800/60">
+          <img
+            src="assets/method.png"
+            alt="l-DeTok overview diagram"
+            class="rounded-2xl w-full h-auto"
+          />
+          <figcaption class="text-xs text-neutral-500 mt-3 leading-relaxed text-justify">
+            <strong>Figure 1.</strong> Our latent denoising tokenizers (<span class="italic">l-DeTok</span>) framework. During tokenizer training, we randomly mask input patches
+            (<em>masking noise</em>) and interpolate encoder-produced latent embeddings with Gaussian noise
+            (<em>interpolative latent noise</em>). The decoder processes these deconstructed latents and mask tokens to reconstruct
+            the original images in pixels — a process we refer to as <em>denoising</em>. When serving as a tokenizer for downstream
+            generative models, both noises are disabled.
+          </figcaption>
+        </figure>
+
+        <!-- Motivation -->
+      <div class="p-4 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <h3 class="font-medium">Motivation: Why train tokenizers for denoising?</h3>
+        <p class="mt-2 text-neutral-700 dark:text-neutral-300">
+          Modern diffusion and autoregressive models both learn to reconstruct clean signals from corrupted contexts (noise or masking).
+          Tokenizers are usually optimized for pixel MSE, not for <em>what generators actually learn</em>.
+          We ask what makes a tokenizer <em>effective for generation</em>. Our answer:
+          <strong>make tokens easy to recover under the same kinds of degradations used by downstream models.</strong>
+        </p>
+      </div>
+
+      <!-- Principle -->
+      <div class="p-4 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <h3 class="font-medium">Unified denoising view</h3>
+        <p class="mt-2 text-neutral-700 dark:text-neutral-300">
+          Non-Autoregressive (Non-AR) models <em>remove injected noise</em>; Autoregressive (AR) <em>models fill in masked context</em>.
+          Both are <em>reconstruction-from-deconstruction</em>.
+          We therefore train the tokenizer so that its latents remain <strong>reconstructable even when heavily corrupted</strong>.
+        </p>
+      </div>
+
+      <!-- Core idea -->
+      <div class="p-4 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <h3 class="font-medium">l-DeTok in a nutshell</h3>
+        <ul class="mt-2 list-disc pl-5 text-neutral-700 dark:text-neutral-300 space-y-2">
+          <li><span class="font-medium">Design principle:</span> Treat tokenization as <em>reconstruction-from-deconstruction</em>: deliberately corrupt latents, then learn to reconstruct the original image.</li>
+          <li><span class="font-medium">Interpolative latent noise:</span> mix encoder latents with Gaussian noise at a random strength; the decoder learns to reconstruct <em>original pixels</em>.</li>
+          <li><span class="font-medium">Optional random masking:</span> hide a random fraction of patches; provide shared <code class="mono">[MASK]</code> tokens to the decoder for <em>context completion</em>.</li>
+        </ul>
+      </div>
+
+      <!-- Why it helps -->
+      <div class="p-4 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <h3 class="font-medium">Why this improves generation</h3>
+        <p class="mt-2 text-neutral-700 dark:text-neutral-300">
+          By training tokens to survive <em>strong corruption</em>, the tokenizer's latent embeddings match downstream training
+          (<em>noise removal</em> or <em>mask filling</em>). This alignment <strong>eases optimization</strong> and
+          <strong>yields better sample quality</strong> across both AR and non-AR families—without relying on large pretrained vision encoders.
+        </p>
+      </div>
+
+      <!-- Objective -->
+      <div class="md:col-span-2 p-4 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <h3 class="font-medium">Minimal recipe (You can implement this in <strong> less than 10 lines</strong> of code)</h3>
+        <ul class="mt-2 list-disc pl-5 text-neutral-700 dark:text-neutral-300 space-y-2">
+          <li>Corrupt latents with <em>interpolative noise</em> (and optional masking), then decode to original signals, e.g. pixels.</li>
+        </ul>
+      </div>
+      </div>
+    </section>
+
+  </section>
+
+  <section id="demos" class="py-12 border-t border-neutral-200/60 dark:border-neutral-800/60">
+    <div class="mx-auto page">
+      <div class="flex items-baseline justify-between gap-3">
+        <h2 class="text-2xl md:text-3xl font-semibold">Interactive demo — Deconstruction & Reconstruction!</h2>
+        <div class="flex gap-2">
+          <button id="demo-prev" class="btn" title="Previous sample">← Prev</button>
+          <button id="demo-next" class="btn" title="Next sample">Next →</button>
+        </div>
+      </div>
+  
+      <!-- Controls -->
+      <div class="mt-4 glass-card">
+        <div class="grid md:grid-cols-12 gap-3 items-center text-sm">
+          <label for="tau-slider" class="text-neutral-500 md:col-span-2">Noise Level τ <span id="tau-label" class="font-mono">0.50</span></label>
+          <input id="tau-slider" class="knob md:col-span-4" type="range" min="0" max="100" step="5" value="50">
+          <label for="mask-slider" class="text-neutral-500 md:col-span-2">Masking Ratio <span id="mask-label" class="font-mono">0%</span></label>
+          <input id="mask-slider" class="knob md:col-span-4" type="range" min="0" max="100" step="5" value="0">
+        </div>
+        <p class="mt-2 text-xs text-neutral-500">Each sample has a 21×21 grid: mask∈{0..1 by 0.05}, τ∈{0..1 by 0.05}. Sliders snap to these values.</p>
+      </div>
+  
+      <!-- Column headers -->
+      <div class="mt-6 grid grid-cols-12 gap-3 items-center">
+        <div class="col-span-2"></div>
+        <div class="col-span-2 text-center text-xs uppercase tracking-wide text-neutral-500">Original Image</div>
+        <div class="col-span-2 text-center text-xs uppercase tracking-wide text-neutral-500">Optional Masking</div>
+        <div class="col-span-2 text-center text-xs uppercase tracking-wide text-neutral-500">Feat. map (clean)</div>
+        <div class="col-span-2 text-center text-xs uppercase tracking-wide text-neutral-500">Feat. map (noisy)</div>
+        <div class="col-span-2 text-center text-xs uppercase tracking-wide text-neutral-500">Reconstruction</div>
+  
+        <!-- Baseline row -->
+        <div class="col-span-2"><span class="pill" style="border-radius:1rem;">baseline tokenizer</span></div>
+        <figure class="col-span-2"><img id="base-ori" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="baseline original"></figure>
+        <figure class="col-span-2"><img id="base-mask" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="baseline masked input"></figure>
+        <figure class="col-span-2"><img id="base-fclean" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="baseline feature map clean"></figure>
+        <figure class="col-span-2"><img id="base-fnoisy" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="baseline feature map noisy"></figure>
+        <figure class="col-span-2"><img id="base-recon" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="baseline reconstruction"></figure>
+  
+        <!-- l-DeTok row -->
+        <!-- <div class="col-span-2"><span class="pill">l-DeTok (ours)</span></div> -->
+        <div class="col-span-2"><span class="pill bg-black text-white" style="border-radius:1rem;">l-DeTok (ours)</span></div>
+        <figure class="col-span-2"><img id="ours-ori" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="ours original"></figure>
+        <figure class="col-span-2"><img id="ours-mask" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="ours masked input"></figure>
+        <figure class="col-span-2"><img id="ours-fclean" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="ours feature map clean"></figure>
+        <figure class="col-span-2"><img id="ours-fnoisy" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="ours feature map noisy"></figure>
+        <figure class="col-span-2"><img id="ours-recon" class="w-full aspect-clip rounded-xl border border-neutral-200/60 dark:border-neutral-800/60" alt="ours reconstruction"></figure>
+      </div>
+  
+      <p class="mt-3 text-xs text-neutral-500"><sup>*</sup>Feature maps are visualized using PCA dimensionality reduction to 3 RGB components, computed from clean features (τ=0, mask ratio=0%) and applied consistently across all noise conditions. The 16×16 feature maps are upsampled to 256×256 using nearest-neighbor interpolation. Masked regions are dimmed to 30% intensity to indicate missing tokens.</p>
+    </div>
+  </section>
+  
+
+
+    <!-- Results (highlight) -->
+    <section id="results" class="py-12 border-t border-neutral-200/60 dark:border-neutral-800/60">
+      <h2 class="text-2xl md:text-3xl font-semibold">Results</h2>
+
+      <!-- TL;DR highlight -->
+      <div class="mt-6 grid gap-4 md:grid-cols-2">
+        <!-- Card: Table 1 — vs SD-VAE baseline -->
+        <div class="p-5 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60 md:col-span-2">
+          <h3 class="font-medium">Plug-and-play across 6 models (vs SD-VAE)</h3>
+          <p class="mt-2 text-neutral-700 dark:text-neutral-300">Drop-in replacement for SD-VAE; no architecture changes. ImageNet 256x256. All models trained for 100 epochs.<br> FID-50K with optimal CFG. Lower FID is better.</p>
+
+          <div class="mt-4 grid gap-6 md:grid-cols-2">
+            <!-- AR column -->
+            <div>
+              <div class="text-xs uppercase tracking-wide text-neutral-500">Autoregressive (AR)</div>
+              <ul class="list-disc pl-5 mt-2 space-y-2 text-neutral-700 dark:text-neutral-300">
+                <li><span class="font-medium">MAR-B</span>: 4.64 → 2.43 <span class="text-neutral-500">(+47.6%)</span></li>
+                <li><span class="font-medium">RandomAR-B</span>: 13.11 → 5.22 <span class="text-neutral-500">(+60.2%)</span></li>
+                <li><span class="font-medium">RasterAR-B</span>: 8.26 → 4.46 <span class="text-neutral-500">(+46.0%)</span></li>
+              </ul>
+            </div>
+
+            <!-- Non-AR column -->
+            <div>
+              <div class="text-xs uppercase tracking-wide text-neutral-500">Non-autoregressive (Diffusion)</div>
+              <ul class="list-disc pl-5 mt-2 space-y-2 text-neutral-700 dark:text-neutral-300">
+                <li><span class="font-medium">SiT-B</span>: 7.66 → 5.13 <span class="text-neutral-500">(+33.0%)</span></li>
+                <li><span class="font-medium">DiT-B</span>: 8.33 → 6.58 <span class="text-neutral-500">(+21.0%)</span></li>
+                <li><span class="font-medium">LightningDiT-B</span>: 4.24 → 3.63 <span class="text-neutral-500">(+14.4%)</span></li>
+              </ul>
+            </div>
+          </div>
+
+          <p class="mt-4 text-xs text-neutral-500">Avg ΔFID: AR Models <span class="mono">+51.3%</span>, Non-AR Models <span class="mono">+22.8%</span>, overall <span class="mono">+37.0%</span>.</p>
+        </div>
+
+        <!-- Card: System-level on ImageNet -->
+        <div class="p-5 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60 md:col-span-2">
+          <h3 class="font-medium">System-level (ImageNet)</h3>
+          <div class="mt-3 grid gap-4 md:grid-cols-2">
+            <div>
+              <div class="text-xs uppercase tracking-wide text-neutral-500">256x256 (w/ CFG)</div>
+              <ul class="list-disc pl-5 mt-2 space-y-2 text-neutral-700 dark:text-neutral-300">
+                <li><span class="font-medium">MAR-B + l-DeTok: <span class="font-bold">FID 1.61</span> — new SoTA with 208M params.</li>
+                <li><span class="font-medium">MAR-L + l-DeTok: <span class="font-bold">FID 1.35</span> — new SoTA with 479M params; beats MAR-H (1.55) and MAR-L (1.78) trained with MAR-VAE.</li>
+              </ul>
+            </div>
+            <div>
+              <div class="text-xs uppercase tracking-wide text-neutral-500">512x512 (w/ CFG)</div>
+              <ul class="list-disc pl-5 mt-2 space-y-2 text-neutral-700 dark:text-neutral-300">
+                <li><span class="font-medium">MAR-L + l-DeTok (ft): <span class="font-bold">FID 1.61</span> / <span class="font-bold">IS 315.7</span> vs MAR-L + MAR-VAE (1.73 / 279.9).</li>
+                <li><span class="font-medium">MAR-B + l-DeTok (scratch): <span class="font-bold">FID 1.83</span> / <span class="font-bold">IS 279.6</span>, competitive with larger diffusion systems.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: Text-to-Image -->
+        <div class="p-5 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+          <h3 class="font-medium">Text-to-Image (MS-COCO 256x256, vs MAR-VAE)</h3>
+          <ul class="list-disc pl-5 mt-3 space-y-2 text-neutral-700 dark:text-neutral-300">
+            <li><span class="font-medium">MAR-B:</span> FID <span class="font-bold">4.97</span> (+60%); CLIP <span class="font-bold">24.82</span> (+12.5%).</li>
+            <li><span class="font-medium">SiT-B:</span> FID <span class="font-bold">4.31</span> (+25%); CLIP <span class="font-bold">24.61</span> (+4.7%).</li>
+            <li>Improves both diversity (FID↓) and alignment (CLIP↑) without external semantic distillation.</li>
+          </ul>
+        </div>
+        <!-- Card: Parameter Efficiency -->
+        <div class="p-5 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+          <h3 class="font-medium">Parameter efficiency</h3>
+          <ul class="list-disc pl-5 mt-3 space-y-2 text-neutral-700 dark:text-neutral-300">
+            <li>MAR-L + l-DeTok hits <span class="font-bold">FID 1.35</span> at <span class="mono">479M</span> params — better FID than VAR-d30 (1.92 @ 2.0B) with ~<span class="font-bold">4.2x</span> fewer params.</li>
+            <li>MAR-B + l-DeTok delivers <span class="font-bold">FID 1.61</span> at <span class="mono">208M</span> — surpasses LlamaGen-3B (2.18 @ 3.1B) with ~<span class="font-bold">15x</span> fewer params.</li>
+          </ul>
+        </div>
+
+
+      <div class="mt-8 text-neutral-700 dark:text-neutral-300 leading-relaxed space-y-4 md:col-span-2">
+          <p class="text-neutral-500 text-sm">
+          Our <span class="mono">l-DeTok</span> serves as a drop-in tokenizer that unifies latent representations across generative paradigms—yielding 
+          more expressive tokens and better downstream generative performance.
+        </p>
+      </div>
+
+      <!-- Table 1: Generalizability across models -->
+      <div class="mt-10 md:col-span-2">
+        <div class="flex items-baseline justify-between">
+          <h3 class="text-xl font-semibold">Generalizability across 6 generative models</h3>
+          <p class="text-xs text-neutral-500">
+            All numbers on ImageNet 256x256; lower is better. CFG tuned per model. 100 epochs.
+          </p>
+        </div>
+      
+        <div class="mt-4 overflow-x-auto rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+          <table class="min-w-[720px] w-full text-sm text-center">
+            <thead class="bg-neutral-50/50 dark:bg-neutral-900/50">
+              <tr class="border-b border-neutral-200/60 dark:border-neutral-800/60 align-bottom">
+                <th class="p-3 text-left">Tokenizer</th>
+                <th class="p-3">rFID</th>
+                <th class="p-3" colspan="3">Autoregressive Models</th>
+                <th class="p-3" colspan="3">Non-autoregressive Models</th>
+              </tr>
+              <tr class="text-xs text-neutral-600 dark:text-neutral-400">
+                <th class="p-3 text-left"></th>
+                <th class="p-3"></th>
+                <th class="p-3">MAR-B</th>
+                <th class="p-3">RandomAR-B</th>
+                <th class="p-3">RasterAR-B</th>
+                <th class="p-3">SiT-B</th>
+                <th class="p-3">DiT-B</th>
+                <th class="p-3">LightningDiT-B</th>
+              </tr>
+            </thead>
+      
+            <tbody class="align-middle">
+              <tr>
+                <td class="p-3 text-xs text-neutral-500 text-left" colspan="8">
+                  <em>Tokenizers trained with semantics distillation from external pretrained models</em>
+                </td>
+              </tr>
+      
+              <tr class="text-neutral-500">
+                <td class="p-3 text-left">VA-VAE</td><td class="p-3 font-medium">0.28</td>
+                <td class="p-3">16.66</td><td class="p-3">38.13</td><td class="p-3">15.88</td>
+                <td class="p-3">4.33</td><td class="p-3">4.91</td><td class="p-3">2.86</td>
+              </tr>
+      
+              <tr class="text-neutral-500">
+                <td class="p-3 text-left">MAETok</td><td class="p-3">0.48</td>
+                <td class="p-3">6.99</td><td class="p-3">24.83</td><td class="p-3">15.92</td>
+                <td class="p-3">4.77</td><td class="p-3">5.24</td><td class="p-3">3.92</td>
+              </tr>
+      
+              <!-- Highlighted: Our l-DeTok + Distillation -->
+              <!-- <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium text-neutral-900 dark:text-neutral-500">
+                <td class="p-3 text-left">Our <span class="mono">l-DeTok</span> + Distillation</td><td class="p-3">0.85</td> -->
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60  font-semibold text-neutral-500"> 
+                <td class="p-3 text-left">Our <span class="mono">l-DeTok</span> + Distillation</td><td class="p-3">0.85</td>
+                <td class="p-3">2.52</td><td class="p-3">5.57</td><td class="p-3">11.99</td>
+                <td class="p-3 font-bold">3.40</td><td class="p-3 font-bold">3.91</td><td class="p-3 font-bold">2.18</td>
+              </tr>
+      
+              <tr>
+                <td class="p-3 text-xs text-neutral-500 text-left" colspan="8">
+                  <em>Tokenizers trained <strong>without</strong> semantics distillation</em>
+                </td>
+              </tr>
+      
+              <tr>
+                <td class="p-3 text-left">SD-VAE</td><td class="p-3">0.61</td>
+                <td class="p-3">4.64</td><td class="p-3">13.11</td><td class="p-3">8.26</td>
+                <td class="p-3">7.66</td><td class="p-3">8.33</td><td class="p-3">4.24</td>
+              </tr>
+      
+              <tr>
+                <td class="p-3 text-left">MAR-VAE</td><td class="p-3">0.53</td>
+                <td class="p-3">3.71</td><td class="p-3">11.78</td><td class="p-3">7.99</td>
+                <td class="p-3">6.26</td><td class="p-3">8.20</td><td class="p-3">3.98</td>
+              </tr>
+      
+              <!-- Highlighted: Our l-DeTok -->
+              <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-semibold text-neutral-900 dark:text-neutral-100">
+                <td class="p-3 text-left">Our <span class="mono">l-DeTok</span></td><td class="p-3">0.68</td>
+                <td class="p-3 font-bold">2.43</td><td class="p-3 font-bold">5.22</td><td class="p-3 font-bold">4.46</td>
+                <td class="p-3">5.13</td><td class="p-3">6.58</td><td class="p-3">3.63</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mt-8 text-neutral-700 dark:text-neutral-300 md:col-span-2">
+          <p class="text-neutral-500 text-sm">
+           Our <span class="mono">l-DeTok</span> generalizes better than prior tokenizers and benefits from privileged info like semantic distillation when available.
+        </p>
+      </div>
+      </div>
+      
+    
+
+      <!-- Table 2: System-level comparison @256 -->
+    <div class="mt-12 md:col-span-2">
+        <div class="flex items-baseline justify-between">
+        <h3 class="text-xl font-semibold">System-level comparison — ImageNet 256x256</h3>
+        <p class="text-xs text-neutral-500">w/o vs. w/ Classifier-Free Guidance (CFG).</p>
+        </div>
+    
+        <div class="mt-4 overflow-x-auto rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <table class="min-w-[720px] w-full text-sm text-center">
+            <thead class="bg-neutral-50/50 dark:bg-neutral-900/50">
+            <tr class="border-b border-neutral-200/60 dark:border-neutral-800/60">
+                <th class="p-3 text-left">Model</th>
+                <th class="p-3">#Params</th>
+                <th class="p-3" colspan="2">w/o CFG</th>
+                <th class="p-3" colspan="2">w/ CFG</th>
+            </tr>
+            <tr class="text-xs text-neutral-600 dark:text-neutral-400">
+                <th class="p-3 text-left"></th><th class="p-3"></th>
+                <th class="p-3">FID ↓</th><th class="p-3">IS ↑</th>
+                <th class="p-3">FID ↓</th><th class="p-3">IS ↑</th>
+            </tr>
+            </thead>
+    
+            <tbody>
+            <tr><td class="p-3 text-xs text-neutral-500 text-left" colspan="6"><em>With semantics distillation from external pretrained models</em></td></tr>
+    
+            <tr class="text-neutral-500"><td class="p-3 text-left">SiT-XL + REPA</td><td class="p-3">675M</td><td class="p-3">5.90</td><td class="p-3">157.8</td><td class="p-3">1.42</td><td class="p-3">305.7</td></tr>
+            <tr class="text-neutral-500"><td class="p-3 text-left">SiT-XL + MAETok</td><td class="p-3">675M</td><td class="p-3">2.31</td><td class="p-3 font-medium">216.5</td><td class="p-3">1.67</td><td class="p-3 font-medium">311.2</td></tr>
+            <tr class="text-neutral-500"><td class="p-3 text-left">LightningDiT + MAETok</td><td class="p-3">675M</td><td class="p-3">2.21</td><td class="p-3">208.3</td><td class="p-3">1.73</td><td class="p-3">308.4</td></tr>
+            <tr class="text-neutral-500"><td class="p-3 text-left">LightningDiT + VAVAE</td><td class="p-3">675M</td><td class="p-3 font-medium">2.17</td><td class="p-3">205.6</td><td class="p-3">1.35</td><td class="p-3">295.3</td></tr>
+            <tr class="text-neutral-500"><td class="p-3 text-left">DDT-XL</td><td class="p-3">675M</td><td class="p-3">6.27</td><td class="p-3">154.7</td><td class="p-3 font-medium">1.26</td><td class="p-3">310.6</td></tr>
+    
+            <tr><td class="p-3 text-xs text-neutral-500 text-left" colspan="6"><em>Without semantics distillation</em></td></tr>
+    
+            <tr><td class="p-3 text-left">DiT-XL/2</td><td class="p-3">675M</td><td class="p-3">9.62</td><td class="p-3">121.5</td><td class="p-3">2.27</td><td class="p-3">278.2</td></tr>
+            <tr><td class="p-3 text-left">SiT-XL/2</td><td class="p-3">675M</td><td class="p-3">8.30</td><td class="p-3">–</td><td class="p-3">2.06</td><td class="p-3">270.3</td></tr>
+            <tr><td class="p-3 text-left">VAR-d30</td><td class="p-3">2.0B</td><td class="p-3">–</td><td class="p-3">–</td><td class="p-3">1.92</td><td class="p-3 font-medium">323.1</td></tr>
+            <tr><td class="p-3 text-left">LlamaGen-3B</td><td class="p-3">3.1B</td><td class="p-3">–</td><td class="p-3">–</td><td class="p-3">2.18</td><td class="p-3">263.3</td></tr>
+            <tr><td class="p-3 text-left">RandAR-XXL</td><td class="p-3">1.4B</td><td class="p-3">–</td><td class="p-3">–</td><td class="p-3">2.15</td><td class="p-3">322.0</td></tr>
+            <tr><td class="p-3 text-left">CausalFusion</td><td class="p-3">676M</td><td class="p-3">3.61</td><td class="p-3">180.9</td><td class="p-3">1.77</td><td class="p-3">282.3</td></tr>
+            <tr><td class="p-3 text-left">MAR-B + MAR-VAE</td><td class="p-3">208M</td><td class="p-3">3.48</td><td class="p-3">192.4</td><td class="p-3">2.31</td><td class="p-3">281.7</td></tr>
+            <tr><td class="p-3 text-left">MAR-L + MAR-VAE</td><td class="p-3">479M</td><td class="p-3">2.60</td><td class="p-3">221.4</td><td class="p-3">1.78</td><td class="p-3">296.0</td></tr>
+            <tr><td class="p-3 text-left">MAR-H + MAR-VAE</td><td class="p-3">943M</td><td class="p-3">2.35</td><td class="p-3">227.8</td><td class="p-3 font-medium">1.55</td><td class="p-3">303.7</td></tr>
+    
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium text-neutral-900 dark:text-neutral-100">
+                <td class="p-3 text-left">MAR-B + <span class="mono">l-DeTok</span></td><td class="p-3">208M</td><td class="p-3">2.79</td><td class="p-3">195.9</td><td class="p-3">1.61</td><td class="p-3">289.7</td>
+            </tr>
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium text-neutral-900 dark:text-neutral-100">
+                <td class="p-3 text-left">MAR-B + <span class="mono">l-DeTok</span><sup>†</sup></td><td class="p-3">208M</td><td class="p-3">2.94</td><td class="p-3">195.5</td><td class="p-3">1.55</td><td class="p-3">291.0</td>
+            </tr>
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium text-neutral-900 dark:text-neutral-100">
+                <td class="p-3 text-left">MAR-L + <span class="mono">l-DeTok</span></td><td class="p-3">479M</td><td class="p-3 font-bold">1.84</td><td class="p-3">238.4</td><td class="p-3">1.43</td><td class="p-3">303.5</td>
+            </tr>
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium text-neutral-900 dark:text-neutral-100">
+                <td class="p-3 text-left">MAR-L + <span class="mono">l-DeTok</span><sup>†</sup></td><td class="p-3">479M</td><td class="p-3">1.86</td><td class="p-3 font-bold">238.6</td><td class="p-3 font-bold">1.35</td><td class="p-3">304.1</td>
+            </tr>
+            </tbody>
+        </table>
+        </div>
+  
+    <p class="mt-2 text-xs text-neutral-500">† With additional decoder fine-tuning.</p>
+  </div>
+  
+
+      <!-- Table 3: ImageNet 512x512 -->
+    <div class="mt-12 md:col-span-2">
+        <div class="flex items-baseline justify-between">
+        <h3 class="text-xl font-semibold">ImageNet 512x512 (w/ CFG)</h3>
+        <p class="text-xs text-neutral-500">All numbers reported at 512x512 resolution.</p>
+        </div>
+    
+        <div class="mt-4 overflow-x-auto rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <table class="min-w-[560px] w-full text-sm text-center">
+            <thead class="bg-neutral-50/50 dark:bg-neutral-900/50">
+            <tr class="border-b border-neutral-200/60 dark:border-neutral-800/60">
+                <th class="p-3 text-left">Model</th>
+                <th class="p-3">#Params</th>
+                <th class="p-3">FID ↓</th>
+                <th class="p-3">IS ↑</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr><td class="p-3 text-left">ADM</td><td class="p-3">554M</td><td class="p-3">7.72</td><td class="p-3">172.7</td></tr>
+            <tr><td class="p-3 text-left">DiT-XL/2</td><td class="p-3">675M</td><td class="p-3">3.04</td><td class="p-3">240.8</td></tr>
+            <tr><td class="p-3 text-left">SiT-XL/2</td><td class="p-3">675M</td><td class="p-3">2.62</td><td class="p-3">252.2</td></tr>
+            <tr><td class="p-3 text-left">SiT-XL/2 + REPA</td><td class="p-3">675M</td><td class="p-3">2.08</td><td class="p-3">274.6</td></tr>
+            <tr><td class="p-3 text-left">MAR-L + MAR-VAE</td><td class="p-3">479M</td><td class="p-3">1.73</td><td class="p-3">279.9</td></tr>
+    
+            <!-- Highlighted ours -->
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium">
+                <td class="p-3 text-left">MAR-B + <span class="mono">l-DeTok</span> (scratch, 400 ep)</td>
+                <td class="p-3">208M</td><td class="p-3">1.83</td><td class="p-3">279.6</td>
+            </tr>
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium">
+                <td class="p-3 text-left">MAR-L + <span class="mono">l-DeTok</span> (fine-tune, 200 ep)</td>
+                <td class="p-3">479M</td><td class="p-3 font-bold">1.61</td><td class="p-3 font-bold">315.7</td>
+            </tr>
+            </tbody>
+        </table>
+        </div>
+    </div>
+    
+    
+    <!-- Table 4: MS-COCO Text-to-Image -->
+    <div class="mt-12 md:col-span-2">
+        <div class="flex items-baseline justify-between">
+        <h3 class="text-xl font-semibold">MS-COCO text-to-image (w/ CFG)</h3>
+        <p class="text-xs text-neutral-500">FID ↓ / CLIP ↑ scores for 256x256 text-to-image generation.</p>
+        </div>
+    
+        <div class="mt-4 overflow-x-auto rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60">
+        <table class="min-w-[560px] w-full text-sm text-center">
+            <thead class="bg-neutral-50/50 dark:bg-neutral-900/50">
+            <tr class="border-b border-neutral-200/60 dark:border-neutral-800/60">
+                <th class="p-3 text-left">Tokenizer</th>
+                <th class="p-3">T2I MAR-B FID ↓</th>
+                <th class="p-3">T2I MAR-B CLIP ↑</th>
+                <th class="p-3">T2I SiT-B FID ↓</th>
+                <th class="p-3">T2I SiT-B CLIP ↑</th>
+            </tr>
+            </thead>
+            <tbody>
+            <tr><td class="p-3 text-left">VA-VAE</td><td class="p-3">34.64</td><td class="p-3">21.98</td><td class="p-3">5.83</td><td class="p-3 font-semibold">25.07</td></tr>
+            <tr><td class="p-3 text-left">SD-VAE</td><td class="p-3">19.75</td><td class="p-3">22.86</td><td class="p-3">6.63</td><td class="p-3">24.00</td></tr>
+            <tr><td class="p-3 text-left">MAR-VAE</td><td class="p-3">12.49</td><td class="p-3">22.07</td><td class="p-3">5.74</td><td class="p-3">23.50</td></tr>
+    
+            <!-- Highlighted ours -->
+            <tr class="bg-neutral-100/70 dark:bg-neutral-800/60 font-medium">
+                <td class="p-3 text-left">Ours (<span class="mono">l-DeTok</span>)</td>
+                <td class="p-3 font-bold">4.97</td><td class="p-3 font-bold">24.82</td>
+                <td class="p-3 font-bold">4.31</td><td class="p-3">24.61</td>
+            </tr>
+            </tbody>
+        </table>
+        </div>
+    </div>
+  
+    </section>
+
+    <!-- Citation -->
+    <section id="citation" class="py-12 border-t border-neutral-200/60 dark:border-neutral-800/60">
+      <h2 class="text-2xl md:text-3xl font-semibold">Citation</h2>
+      <p class="mt-4 text-neutral-700 dark:text-neutral-300">If you find this work useful, please consider citing:</p>
+      
+      <div class="mt-6 relative">
+        <pre id="bibtex" class="p-4 rounded-2xl border border-neutral-200/60 dark:border-neutral-800/60 bg-neutral-50/50 dark:bg-neutral-900/50 text-xs md:text-sm overflow-x-auto"><code>@article{yang2025detok,
+  title={Latent Denoising Makes Good Visual Tokenizers},
+  author={Yang, Jiawei and Li, Tianhong and Fan, Lijie and Tian, Yonglong and Wang, Yue},
+  journal={arXiv preprint arXiv:2507.15856},
+  year={2025}
+}</code></pre>
+        <button id="copy-bib" class="btn absolute top-3 right-3 text-xs">
+          📚 Copy BibTeX
+        </button>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Footer -->
+  <footer class="mx-auto page px-6 pb-16 pt-8 border-t border-neutral-200/60 dark:border-neutral-800/60 text-sm text-neutral-500">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+      <p>© 2025 l-DeTok authors. This page is open-source.</p>
+    </div>
+  </footer>
+
+  <script>
+    // Copy BibTeX helper
+    const btn = document.getElementById('copy-bib');
+    if (btn) btn.addEventListener('click', async () => {
+      const txt = document.getElementById('bibtex').innerText;
+      try { await navigator.clipboard.writeText(txt); btn.textContent = '✅ BibTeX copied'; }
+      catch (e) { btn.textContent = 'Copy failed'; }
+      setTimeout(() => (btn.textContent = '📚 Copy BibTeX'), 2200);
+    });
+  </script>
+
+  <script type="module">
+    // ====== DEMO WIRING (static assets; 8 samples; 21×21 grid) ======
+    const $ = (s, r=document) => r.querySelector(s);
+    const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
+    
+    const maskSlider = $('#mask-slider');
+    const tauSlider  = $('#tau-slider');
+    const maskLabel  = $('#mask-label');
+    const tauLabel   = $('#tau-label');
+    const btnPrev    = $('#demo-prev');
+    const btnNext    = $('#demo-next');
+    
+    const SAMPLES = 5; // hidden from users
+    let sampleIdx = 1; // 0..4
+    
+    function fmt2(x){ return x.toFixed(2); }
+    function pctToRatio(p){ return +(p/100).toFixed(2); }
+    
+    function setSrcWithFallback(imgEl, primary, fallbacks=[]){
+      const all = [primary, ...fallbacks];
+      let i = 0;
+      imgEl.onerror = () => { if(i < all.length-1){ i++; imgEl.src = all[i]; } };
+      imgEl.src = all[i];
+    }
+    
+    function pathOriginal(i){
+      // Use masked_input at 0.00 as the original
+      return `assets/sample_${i}/masked_input/masking_0.00.jpg`;
+    }
+    function pathMasked(i, m){
+      const mm = fmt2(m); return `assets/sample_${i}/masked_input/masking_${mm}.jpg`;
+    }
+    function pathFeatClean(i, who, m){
+      const mm = fmt2(m); return `assets/sample_${i}/feature_map_before_noising/${who}-masking_${mm}.jpg`;
+    }
+    function pathFeatNoisy(i, who, m, t){
+      const mm = fmt2(m), tt = fmt2(t);
+      const p1 = `assets/sample_${i}/feature_map_after_noising/${who}-masking_${mm}-noise_${tt}.jpg`;
+      const p2 = `assets/samples_${i}/feature_map_after_noising/${who}-masking_${mm}-noise_${tt}.jpg`; // typo-safe fallback
+      return [p1, p2];
+    }
+    function pathRecon(i, who, m, t){
+      const mm = fmt2(m), tt = fmt2(t);
+      return `assets/sample_${i}/reconstruction/${who}-masking_${mm}-noise_${tt}.jpg`;
+    }
+    
+    function updateLabels(){
+      maskLabel.textContent = `${+maskSlider.value}%`;
+      tauLabel.textContent  = (+tauSlider.value/100).toFixed(2);
+    }
+    
+    function updateDemo(){
+      const mRatio = pctToRatio(+maskSlider.value); // 0.00..1.00 step .05
+      const tau    = pctToRatio(+tauSlider.value);  // 0.00..1.00 step .05
+      updateLabels();
+    
+      // Common originals (identical for both rows)
+      const ori = pathOriginal(sampleIdx);
+      setSrcWithFallback($('#base-ori'),  ori);
+      setSrcWithFallback($('#ours-ori'),  ori);
+    
+      const masked = pathMasked(sampleIdx, mRatio);
+      setSrcWithFallback($('#base-mask'), masked);
+      setSrcWithFallback($('#ours-mask'), masked);
+    
+      // Feature maps (clean -> mask only)
+      setSrcWithFallback($('#base-fclean'), pathFeatClean(sampleIdx, 'baseline', mRatio));
+      setSrcWithFallback($('#ours-fclean'), pathFeatClean(sampleIdx, 'detok',    mRatio));
+    
+      // Feature maps (noisy -> mask+tau)
+      const [bfn, bfnAlt] = pathFeatNoisy(sampleIdx, 'baseline', mRatio, tau);
+      const [ofn, ofnAlt] = pathFeatNoisy(sampleIdx, 'detok',    mRatio, tau);
+      setSrcWithFallback($('#base-fnoisy'), bfn, [bfnAlt]);
+      setSrcWithFallback($('#ours-fnoisy'), ofn, [ofnAlt]);
+    
+      // Reconstructions (mask+tau)
+      setSrcWithFallback($('#base-recon'), pathRecon(sampleIdx, 'baseline', mRatio, tau));
+      setSrcWithFallback($('#ours-recon'), pathRecon(sampleIdx, 'detok',    mRatio, tau));
+    }
+    
+    // Snap & events
+    maskSlider.addEventListener('input', ()=>{ maskSlider.value = Math.round(maskSlider.value/5)*5; updateDemo(); });
+    tauSlider .addEventListener('input', ()=>{ tauSlider.value  = Math.round(tauSlider.value /5)*5; updateDemo(); });
+    btnPrev   .addEventListener('click', ()=>{ sampleIdx = ((sampleIdx+SAMPLES-2)%SAMPLES)+1; updateDemo(); });
+    btnNext   .addEventListener('click', ()=>{ sampleIdx = (sampleIdx%SAMPLES)+1; updateDemo(); });
+    
+    // Keyboard: ←/→ change sample, ↑/↓ adjust mask
+    window.addEventListener('keydown', (e)=>{
+      if(e.key==='ArrowLeft'){ btnPrev.click(); }
+      else if(e.key==='ArrowRight'){ btnNext.click(); }
+      else if(e.key==='ArrowUp'){ maskSlider.value = Math.min(100, +maskSlider.value + 5); updateDemo(); }
+      else if(e.key==='ArrowDown'){ maskSlider.value = Math.max(0,   +maskSlider.value - 5); updateDemo(); }
+    });
+    
+    updateDemo();
+    
+    // ---------- Keep gallery reveal sliders working ----------
+    $$('.compare').forEach(box=>{
+      const slider = box.querySelector('input[type=range]');
+      if(!slider) return;
+      const set = v => box.style.setProperty('--pos', v+'%');
+      set(slider.value);
+      slider.addEventListener('input', e=> set(e.target.value));
+    });
+    </script>
+    
+</body>
+</html>
