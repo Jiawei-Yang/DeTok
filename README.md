@@ -171,7 +171,7 @@ torchrun --nproc_per_node=8 --nnodes=$num_nodes --node_rank=${NODE_RANK} --maste
     --stats_key $tokenizer_exp_name --stats_cache_path work_dirs/stats.pkl \
     --load_tokenizer_from work_dirs/$tokenizer_project/$tokenizer_exp_name/checkpoints/latest.pth \
     --model MAR_base --no_dropout_in_mlp \
-    --diffloss_d 6 --diffloss_w 1024 \
+    --diffloss_d 3 --diffloss_w 1024 \
     --num_sampling_steps 100 --cfg 4.0 \
     --cfg_list 3.0 3.5 3.7 3.8 3.9 4.0 4.1 4.3 4.5 \
     --vis_freq 50 --eval_bsz 256 \
